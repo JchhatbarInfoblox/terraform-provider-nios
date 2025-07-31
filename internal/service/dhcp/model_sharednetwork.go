@@ -288,7 +288,6 @@ var SharednetworkResourceSchemaAttributes = map[string]schema.Attribute{
 	"ignore_client_identifier": schema.BoolAttribute{
 		Optional: true,
 		Computed: true,
-		Default:  booldefault.StaticBool(false),
 		Validators: []validator.Bool{
 			boolvalidator.AlsoRequires(path.MatchRoot("use_ignore_client_identifier")),
 		},
@@ -306,7 +305,6 @@ var SharednetworkResourceSchemaAttributes = map[string]schema.Attribute{
 	"ignore_id": schema.StringAttribute{
 		Optional: true,
 		Computed: true,
-		Default:  stringdefault.StaticString("NONE"),
 		Validators: []validator.String{
 			stringvalidator.OneOf("CLIENT", "MACADDR", "NONE"),
 			stringvalidator.AlsoRequires(path.MatchRoot("use_ignore_id")),
@@ -475,7 +473,6 @@ var SharednetworkResourceSchemaAttributes = map[string]schema.Attribute{
 	"use_ignore_client_identifier": schema.BoolAttribute{
 		Optional:            true,
 		Computed:            true,
-		Default:             booldefault.StaticBool(false),
 		MarkdownDescription: "Use flag for: ignore_client_identifier",
 	},
 	"use_ignore_dhcp_option_list_request": schema.BoolAttribute{
@@ -487,7 +484,6 @@ var SharednetworkResourceSchemaAttributes = map[string]schema.Attribute{
 	"use_ignore_id": schema.BoolAttribute{
 		Optional:            true,
 		Computed:            true,
-		Default:             booldefault.StaticBool(false),
 		MarkdownDescription: "Use flag for: ignore_id",
 	},
 	"use_lease_scavenge_time": schema.BoolAttribute{
@@ -591,6 +587,7 @@ func FlattenSharednetwork(ctx context.Context, from *dhcp.Sharednetwork, diags *
 	}
 	m := SharednetworkModel{}
 	m.Flatten(ctx, from, diags)
+	m.ExtAttrsAll = types.MapNull(types.StringType)
 	t, d := types.ObjectValueFrom(ctx, SharednetworkAttrTypes, m)
 	diags.Append(d...)
 	return t
@@ -632,7 +629,19 @@ func (m *SharednetworkModel) Flatten(ctx context.Context, from *dhcp.Sharednetwo
 	m.NetworkView = flex.FlattenStringPointer(from.NetworkView)
 	m.Networks = flex.FlattenFrameworkUnorderedListNestedBlock(ctx, from.Networks, SharednetworkNetworksAttrTypes, diags, FlattenSharednetworkNetworks)
 	m.Nextserver = flex.FlattenStringPointer(from.Nextserver)
-	m.Options = RemoveDefaultDHCPOptions(ctx, diags, from.Options, m.Options)
+	m.Options = flex.FilterDHCPOptions(
+		ctx,
+		diags,
+		from.Options,
+		m.Options,
+		SharednetworkOptionsAttrTypes,
+		func(ctx context.Context, opt *dhcp.SharednetworkOptions, d *diag.Diagnostics) types.Object {
+			return FlattenSharednetworkOptions(ctx, opt, d)
+		},
+		func(ctx context.Context, obj types.Object, d *diag.Diagnostics) *dhcp.SharednetworkOptions {
+			return ExpandSharednetworkOptions(ctx, obj, d)
+		},
+	)
 	m.PxeLeaseTime = flex.FlattenInt64Pointer(from.PxeLeaseTime)
 	m.StaticHosts = flex.FlattenInt64Pointer(from.StaticHosts)
 	m.TotalHosts = flex.FlattenInt64Pointer(from.TotalHosts)
@@ -655,76 +664,4 @@ func (m *SharednetworkModel) Flatten(ctx context.Context, from *dhcp.Sharednetwo
 	m.UseOptions = types.BoolPointerValue(from.UseOptions)
 	m.UsePxeLeaseTime = types.BoolPointerValue(from.UsePxeLeaseTime)
 	m.UseUpdateDnsOnLeaseRenewal = types.BoolPointerValue(from.UseUpdateDnsOnLeaseRenewal)
-}
-
-func RemoveDefaultDHCPOptions(ctx context.Context, diags *diag.Diagnostics, options []dhcp.SharednetworkOptions, planOptions internaltypes.UnorderedListValue) internaltypes.UnorderedListValue {
-	defaultOptionName := "dhcp-lease-time"
-
-	// If no options, return empty list
-	if len(options) == 0 {
-		return internaltypes.NewUnorderedListValueNull(types.ObjectType{AttrTypes: SharednetworkOptionsAttrTypes})
-	}
-
-	// If plan options is null or unknown, return original options
-	if planOptions.IsNull() || planOptions.IsUnknown() {
-		return flex.FlattenFrameworkUnorderedListNestedBlock(ctx, options, SharednetworkOptionsAttrTypes, diags, FlattenSharednetworkOptions)
-	}
-
-	// Convert plan options to a map for easy lookup
-	baseList, err := planOptions.ToListValue(ctx)
-	if err != nil {
-		return flex.FlattenFrameworkUnorderedListNestedBlock(ctx, options, SharednetworkOptionsAttrTypes, diags, FlattenSharednetworkOptions)
-	}
-
-	planOptionsArr := flex.ExpandFrameworkListNestedBlock(ctx, baseList, diags, ExpandSharednetworkOptions)
-	planOptionsMap := make(map[string]dhcp.SharednetworkOptions)
-	var planOrder []string
-	for _, opt := range planOptionsArr {
-		if opt.Name != nil {
-			planOptionsMap[*opt.Name] = opt
-			planOrder = append(planOrder, *opt.Name)
-		}
-	}
-
-	// Convert current options to a map
-	currentOptionsMap := make(map[string]dhcp.SharednetworkOptions)
-	for _, opt := range options {
-		if opt.Name != nil {
-			currentOptionsMap[*opt.Name] = opt
-		}
-	}
-
-	// Build result maintaining plan order
-	var result []dhcp.SharednetworkOptions
-	for _, name := range planOrder {
-		if name == defaultOptionName {
-			// For lease-time option, check if values match
-			planOpt, planExists := planOptionsMap[name]
-			currentOpt, currentExists := currentOptionsMap[name]
-
-			if planExists && currentExists &&
-				planOpt.Value != nil && currentOpt.Value != nil &&
-				*planOpt.Value == *currentOpt.Value {
-				result = append(result, currentOpt)
-			}
-		} else {
-			// For non-lease-time options, use current value if exists
-			if opt, exists := currentOptionsMap[name]; exists {
-				result = append(result, opt)
-			}
-		}
-	}
-
-	// Add any remaining options that weren't in the plan but should be kept
-	for _, opt := range options {
-		if opt.Name == nil {
-			continue
-		}
-		_, inPlan := planOptionsMap[*opt.Name]
-		if !inPlan && *opt.Name != defaultOptionName {
-			result = append(result, opt)
-		}
-	}
-
-	return flex.FlattenFrameworkUnorderedListNestedBlock(ctx, result, SharednetworkOptionsAttrTypes, diags, FlattenSharednetworkOptions)
 }

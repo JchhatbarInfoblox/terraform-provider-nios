@@ -14,17 +14,30 @@ Manages a DNS A record.
 
 ```terraform
 // Create Record A with Basic Fields
-resource "nios_dns_record_a" "create_record" {
+resource "nios_dns_record_a" "create_record_a" {
   name     = "example_record.example.com"
   ipv4addr = "10.20.1.2"
   view     = "default"
   extattrs = {
-    Site = "Siteblr"
+    Site = "location-1"
+  }
+}
+
+// Create Record A with additional fields
+resource "nios_dns_record_a" "create_record_a_with_additional_fields" {
+  name     = "example_record_with_ttl.example.com"
+  ipv4addr = "10.20.1.3"
+  view     = "default"
+  use_ttl  = true
+  ttl      = 10
+  comment  = "Example A record"
+  extattrs = {
+    Site = "location-1"
   }
 }
 
 // Create Record A using function call to retrieve ipv4addr
-resource "nios_dns_record_a" "create_with_func_call" {
+resource "nios_dns_record_a" "create_record_a_with_func_call" {
   name = "example_func_call.example.com"
   func_call = {
     attribute_name  = "ipv4addr"
@@ -69,7 +82,7 @@ resource "nios_dns_record_a" "create_with_func_call" {
 - `aws_rte53_record_info` (Attributes) The AWS Route53 record information associated with the record. (see [below for nested schema](#nestedatt--aws_rte53_record_info))
 - `cloud_info` (Attributes) The cloud information associated with the record. (see [below for nested schema](#nestedatt--cloud_info))
 - `creation_time` (Number) The time of the record creation in Epoch seconds format.
-- `discovered_data` (Attributes) (see [below for nested schema](#nestedatt--discovered_data))
+- `discovered_data` (Attributes) The discovered data for the record. (see [below for nested schema](#nestedatt--discovered_data))
 - `dns_name` (String) The name for an A record in punycode format.
 - `extattrs_all` (Map of String) Extensible attributes associated with the object , including default attributes.
 - `last_queried` (Number) The time of the last DNS query in Epoch seconds format.

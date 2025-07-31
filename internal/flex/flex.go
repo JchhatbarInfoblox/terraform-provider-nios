@@ -3,10 +3,14 @@ package flex
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-nettypes/cidrtypes"
+	"github.com/hashicorp/terraform-plugin-framework-nettypes/hwtypes"
+	"github.com/hashicorp/terraform-plugin-framework-nettypes/iptypes"
 	"github.com/hashicorp/terraform-plugin-framework-timetypes/timetypes"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -371,6 +375,22 @@ func ExpandFrameworkListNestedBlock[T any, U any](ctx context.Context, tfList in
 
 }
 
+func ExpandFrameworkListNestedBlockNilAsEmpty[T any, U any](ctx context.Context, tfList interface {
+	basetypes.ListValuable
+	ElementsAs(ctx context.Context, target interface{}, allowUnhandled bool) diag.Diagnostics
+}, diags *diag.Diagnostics, f FrameworkElementFlExFunc[T, *U]) []U {
+	if tfList.IsNull() || tfList.IsUnknown() {
+		return make([]U, 0)
+	}
+
+	var data []T
+
+	diags.Append(tfList.ElementsAs(ctx, &data, false)...)
+
+	return ApplyToAll(data, func(t T) U {
+		return *f(ctx, t, diags)
+	})
+}
 func ExpandFrameworkMapFilterString(ctx context.Context, tfMap types.Map, diags *diag.Diagnostics) string {
 	if tfMap.IsNull() || tfMap.IsUnknown() {
 		return ""
@@ -495,4 +515,254 @@ func ExpandList[U any](ctx context.Context, tfList types.List, u U, diags *diag.
 	diags.Append(diag...)
 	diags.Append(lv.ElementsAs(ctx, &u, false)...)
 	return u
+}
+
+func ExpandMACAddress(mac hwtypes.MACAddress) *string {
+	if mac.IsNull() || mac.IsUnknown() {
+		return nil
+	}
+	return ExpandStringPointer(mac.StringValue)
+}
+
+func FlattenMACAddress(mac *string) hwtypes.MACAddress {
+	if mac == nil {
+		return hwtypes.NewMACAddressNull()
+	}
+	return hwtypes.MACAddress{
+		StringValue: FlattenStringPointer(mac),
+	}
+}
+
+func ExpandIPv4Address(ipv4addr iptypes.IPv4Address) *string {
+	if ipv4addr.IsNull() || ipv4addr.IsUnknown() {
+		return nil
+	}
+	return ExpandStringPointer(ipv4addr.StringValue)
+}
+
+func FlattenIPv4Address(ipv4addr *string) iptypes.IPv4Address {
+	if ipv4addr == nil || *ipv4addr == "" {
+		return iptypes.NewIPv4AddressNull()
+	}
+	return iptypes.IPv4Address{
+		StringValue: FlattenStringPointer(ipv4addr),
+	}
+}
+
+func ExpandIPv6Address(ipv6addr iptypes.IPv6Address) *string {
+	if ipv6addr.IsNull() || ipv6addr.IsUnknown() {
+		return nil
+	}
+	return ExpandStringPointer(ipv6addr.StringValue)
+}
+
+func FlattenIPv6Address(ipv6addr *string) iptypes.IPv6Address {
+	if ipv6addr == nil || *ipv6addr == "" {
+		return iptypes.NewIPv6AddressNull()
+	}
+	return iptypes.IPv6Address{
+		StringValue: FlattenStringPointer(ipv6addr),
+	}
+}
+
+func ExpandIPAddress(ipaddr iptypes.IPAddress) *string {
+	if ipaddr.IsNull() || ipaddr.IsUnknown() {
+		return nil
+	}
+	return ExpandStringPointer(ipaddr.StringValue)
+}
+
+func FlattenIPAddress(ipaddr *string) iptypes.IPAddress {
+	if ipaddr == nil || *ipaddr == "" {
+		return iptypes.NewIPAddressNull()
+	}
+	return iptypes.IPAddress{
+		StringValue: FlattenStringPointer(ipaddr),
+	}
+}
+
+func ExpandIPv4CIDR(ipv4addr cidrtypes.IPv4Prefix) *string {
+	if ipv4addr.IsNull() || ipv4addr.IsUnknown() {
+		return nil
+	}
+	return ExpandStringPointer(ipv4addr.StringValue)
+}
+
+func FlattenIPv4CIDR(ipv4addr *string) cidrtypes.IPv4Prefix {
+	if ipv4addr == nil || *ipv4addr == "" {
+		return cidrtypes.NewIPv4PrefixNull()
+	}
+	return cidrtypes.IPv4Prefix{
+		StringValue: FlattenStringPointer(ipv4addr),
+	}
+}
+
+func ExpandIPv6CIDR(ipv6addr cidrtypes.IPv6Prefix) *string {
+	if ipv6addr.IsNull() || ipv6addr.IsUnknown() {
+		return nil
+	}
+	return ExpandStringPointer(ipv6addr.StringValue)
+}
+
+func FlattenIPv6CIDR(ipv6addr *string) cidrtypes.IPv6Prefix {
+	if ipv6addr == nil || *ipv6addr == "" {
+		return cidrtypes.NewIPv6PrefixNull()
+	}
+	return cidrtypes.IPv6Prefix{
+		StringValue: FlattenStringPointer(ipv6addr),
+	}
+}
+
+// FilterDHCPOptions is a generic function to filter DHCP options based on planned values
+func FilterDHCPOptions[T any](
+    ctx context.Context,
+    diags *diag.Diagnostics,
+    fromOptions []T,
+    tfOptions internaltypes.UnorderedListValue,
+    attrTypes map[string]attr.Type,
+    flattenFunc func(context.Context, *T, *diag.Diagnostics) types.Object,
+    expandFunc func(context.Context, types.Object, *diag.Diagnostics) *T,
+) internaltypes.UnorderedListValue {
+    if len(fromOptions) == 0 ||tfOptions.IsNull() || tfOptions.IsUnknown(){
+        return internaltypes.NewUnorderedListValueNull(types.ObjectType{AttrTypes: attrTypes})
+    }
+    
+    // Convert UnorderedListValue to List for processing
+    baseList, err := tfOptions.ToListValue(ctx)
+    if err != nil {
+        diags.AddError(
+            "Error converting unordered list",
+            fmt.Sprintf("Failed to convert options to list: %s", err),
+        )
+        return FlattenFrameworkUnorderedListNestedBlock(ctx, fromOptions, attrTypes, diags, flattenFunc)
+    }
+    
+    // Expand tfOptions (plan) to slice and map
+    tfOptionsList := ExpandFrameworkListNestedBlock(ctx, baseList, diags, expandFunc)
+    
+    tfOptionsMap := make(map[string]T)
+    var tfOrder []string
+    
+    for _, opt := range tfOptionsList {
+        name := GetOptionName(opt)
+        if name != nil {
+            tfOptionsMap[*name] = opt
+            tfOrder = append(tfOrder, *name)
+        }
+    }
+    
+    // Convert current options (fromOptions) to map
+    currentOptionsMap := make(map[string]T)
+    for _, opt := range fromOptions {
+        name := GetOptionName(opt)
+        if name != nil {
+            currentOptionsMap[*name] = opt
+        }
+    }
+    
+    // Build result maintaining tfOrder
+    var result []T
+    for _, name := range tfOrder {
+        currentOpt, exists := currentOptionsMap[name]
+        if !exists {
+            continue
+        }
+        
+        useOption := GetOptionUseFlag(currentOpt)
+        planName := GetOptionName(tfOptionsMap[name])
+        if (useOption != nil && *useOption) || (planName != nil) {
+            result = append(result, currentOpt)
+        }
+    }
+    
+    // Add any remaining fromOptions not in tfOptions but still valid
+    for _, opt := range fromOptions {
+        name := GetOptionName(opt)
+        if name == nil {
+            continue
+        }
+        
+        _, inPlan := tfOptionsMap[*name]
+        useOption := GetOptionUseFlag(opt)
+        if !inPlan && useOption != nil && *useOption {
+            result = append(result, opt)
+        }
+    }
+    
+    // Return unordered list maintaining order from plan
+    return FlattenFrameworkUnorderedListNestedBlock(ctx, result, attrTypes, diags, flattenFunc)
+}
+
+// GetOptionName is a generic function that extracts the Name field from DHCP options
+func GetOptionName[T any](option T) *string {
+    // Use reflection to access the Name field
+    val := reflect.ValueOf(option)
+    
+    // Handle pointer types by dereferencing
+    if val.Kind() == reflect.Ptr {
+        if val.IsNil() {
+            return nil
+        }
+        val = val.Elem()
+    }
+    
+    // Try to get the Name field
+    nameField := val.FieldByName("Name")
+    if !nameField.IsValid() {
+        return nil
+    }
+    
+    // If Name is a pointer to string
+    if nameField.Kind() == reflect.Ptr {
+        if nameField.IsNil() {
+            return nil
+        }
+        name := nameField.Elem().String()
+        return &name
+    }
+    
+    // If Name is a string directly
+    if nameField.Kind() == reflect.String {
+        name := nameField.String()
+        return &name
+    }
+    
+    return nil
+}
+
+// GetOptionUseFlag is a generic function that extracts the UseOption field from DHCP options
+func GetOptionUseFlag[T any](option T) *bool {
+    // Use reflection to access the UseOption field
+    val := reflect.ValueOf(option)
+    
+    // Handle pointer types by dereferencing
+    if val.Kind() == reflect.Ptr {
+        if val.IsNil() {
+            return nil
+        }
+        val = val.Elem()
+    }
+    
+    // Try to get the UseOption field
+    useField := val.FieldByName("UseOption")
+    if !useField.IsValid() {
+        return nil
+    }
+    
+    // If UseOption is a pointer to bool
+    if useField.Kind() == reflect.Ptr {
+        if useField.IsNil() {
+            return nil
+        }
+        useBool := useField.Elem().Bool()
+        return &useBool
+    }
+    
+    // If UseOption is a bool directly
+    if useField.Kind() == reflect.Bool {
+        useBool := useField.Bool()
+        return &useBool
+    }
+    
+    return nil
 }

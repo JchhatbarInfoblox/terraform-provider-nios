@@ -215,14 +215,12 @@ func (m *DtcPoolModel) Expand(ctx context.Context, diags *diag.Diagnostics) *dtc
 		return nil
 	}
 	to := &dtc.DtcPool{
-		Ref:                      flex.ExpandStringPointer(m.Ref),
 		AutoConsolidatedMonitors: flex.ExpandBoolPointer(m.AutoConsolidatedMonitors),
 		Availability:             flex.ExpandStringPointer(m.Availability),
 		Comment:                  flex.ExpandStringPointer(m.Comment),
 		ConsolidatedMonitors:     flex.ExpandFrameworkListNestedBlock(ctx, m.ConsolidatedMonitors, diags, ExpandDtcPoolConsolidatedMonitors),
 		Disable:                  flex.ExpandBoolPointer(m.Disable),
 		ExtAttrs:                 ExpandExtAttrs(ctx, m.ExtAttrs, diags),
-		Health:                   ExpandDtcPoolHealth(ctx, m.Health, diags),
 		LbAlternateMethod:        flex.ExpandStringPointer(m.LbAlternateMethod),
 		LbAlternateTopology:      flex.ExpandStringPointer(m.LbAlternateTopology),
 		LbDynamicRatioAlternate:  ExpandDtcPoolLbDynamicRatioAlternate(ctx, m.LbDynamicRatioAlternate, diags),
@@ -245,6 +243,7 @@ func FlattenDtcPool(ctx context.Context, from *dtc.DtcPool, diags *diag.Diagnost
 	}
 	m := DtcPoolModel{}
 	m.Flatten(ctx, from, diags)
+	m.ExtAttrsAll = types.MapNull(types.StringType)
 	t, d := types.ObjectValueFrom(ctx, DtcPoolAttrTypes, m)
 	diags.Append(d...)
 	return t

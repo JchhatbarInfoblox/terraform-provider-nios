@@ -58,12 +58,6 @@ func TestAccSharednetworkResource_basic(t *testing.T) {
 					resource.TestCheckResourceAttr(resourceName, "ignore_dhcp_option_list_request", "false"),
 					resource.TestCheckResourceAttr(resourceName, "ignore_id", "NONE"),
 					resource.TestCheckResourceAttr(resourceName, "lease_scavenge_time", "-1"),
-					resource.TestCheckResourceAttr(resourceName, "options.#", "1"),
-					resource.TestCheckResourceAttr(resourceName, "options.0.name", "dhcp-lease-time"),
-					resource.TestCheckResourceAttr(resourceName, "options.0.num", "51"),
-					resource.TestCheckResourceAttr(resourceName, "options.0.value", "43200"),
-					resource.TestCheckResourceAttr(resourceName, "options.0.use_option", "false"),
-					resource.TestCheckResourceAttr(resourceName, "options.0.vendor_class", "DHCP"),
 					resource.TestCheckResourceAttr(resourceName, "update_dns_on_lease_renewal", "false"),
 					resource.TestCheckResourceAttr(resourceName, "use_authority", "false"),
 					resource.TestCheckResourceAttr(resourceName, "use_bootfile", "false"),
@@ -564,7 +558,6 @@ func TestAccSharednetworkResource_ExtAttrs(t *testing.T) {
 }
 
 func TestAccSharednetworkResource_IgnoreClientIdentifier(t *testing.T) {
-	t.Skip("Skipping test as field ignore_id is used instead of ignore_client_identifier in version WAPI 1.8 or higher.")
 	var resourceName = "nios_dhcp_shared_network.test_ignore_client_identifier"
 	var v dhcp.Sharednetwork
 	name := acctest.RandomNameWithPrefix("shared_network")
@@ -587,7 +580,7 @@ func TestAccSharednetworkResource_IgnoreClientIdentifier(t *testing.T) {
 				Config: testAccSharednetworkIgnoreClientIdentifier(name, networks, true, true),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckSharednetworkExists(context.Background(), resourceName, &v),
-					resource.TestCheckResourceAttr(resourceName, "ignore_client_identifier", "false"),
+					resource.TestCheckResourceAttr(resourceName, "ignore_client_identifier", "true"),
 				),
 			},
 			// Delete testing automatically occurs in TestCase
@@ -627,7 +620,6 @@ func TestAccSharednetworkResource_IgnoreDhcpOptionListRequest(t *testing.T) {
 }
 
 func TestAccSharednetworkResource_IgnoreId(t *testing.T) {
-	t.Skip("Skipping test as field gnore_client_identifier is used in version WAPI 1.8 or higher.")
 	var resourceName = "nios_dhcp_shared_network.test_ignore_id"
 	var v dhcp.Sharednetwork
 	name := acctest.RandomNameWithPrefix("shared_network")
@@ -894,20 +886,24 @@ func TestAccSharednetworkResource_Options(t *testing.T) {
 	options := []map[string]any{
 		{
 			"name":  "domain-name",
+			"num" : "15",
 			"value": "aa.bb.com",
 		},
 		{
 			"name":  "dhcp-lease-time",
+			"num":  "51",
 			"value": "72000",
 		},
 	}
 	optionsUpdated := []map[string]any{
 		{
 			"name":  "domain-name",
+			"num": "15",
 			"value": "cc.dd.com",
 		},
 		{
 			"name":  "dhcp-lease-time",
+			"num":  "51",
 			"value": "82000",
 		},
 	}
@@ -1293,7 +1289,6 @@ func TestAccSharednetworkResource_UseEnableDdns(t *testing.T) {
 }
 
 func TestAccSharednetworkResource_UseIgnoreClientIdentifier(t *testing.T) {
-	t.Skip("Skipping test as field ignore_id is used instead of ignore_client_identifier in version WAPI 1.8 or higher.")
 	var resourceName = "nios_dhcp_shared_network.test_use_ignore_client_identifier"
 	var v dhcp.Sharednetwork
 	name := acctest.RandomNameWithPrefix("shared_network")
@@ -1356,7 +1351,6 @@ func TestAccSharednetworkResource_UseIgnoreDhcpOptionListRequest(t *testing.T) {
 }
 
 func TestAccSharednetworkResource_UseIgnoreId(t *testing.T) {
-	t.Skip("Skipping test as field gnore_client_identifier is used in version WAPI 1.8 or higher.")
 	var resourceName = "nios_dhcp_shared_network.test_use_ignore_id"
 	var v dhcp.Sharednetwork
 	name := acctest.RandomNameWithPrefix("shared_network")
@@ -1368,7 +1362,7 @@ func TestAccSharednetworkResource_UseIgnoreId(t *testing.T) {
 		Steps: []resource.TestStep{
 			// Create and Read
 			{
-				Config: testAccSharednetworkUseIgnoreId(name, networks, true, true),
+				Config: testAccSharednetworkUseIgnoreId(name, networks, true),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckSharednetworkExists(context.Background(), resourceName, &v),
 					resource.TestCheckResourceAttr(resourceName, "use_ignore_id", "true"),
@@ -1376,7 +1370,7 @@ func TestAccSharednetworkResource_UseIgnoreId(t *testing.T) {
 			},
 			// Update and Read
 			{
-				Config: testAccSharednetworkUseIgnoreId(name, networks, false, false),
+				Config: testAccSharednetworkUseIgnoreId(name, networks, false),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckSharednetworkExists(context.Background(), resourceName, &v),
 					resource.TestCheckResourceAttr(resourceName, "use_ignore_id", "false"),
@@ -2102,16 +2096,15 @@ resource "nios_dhcp_shared_network" "test_use_ignore_dhcp_option_list_request" {
 `, name, networksStr, useIgnoreDhcpOptionListRequest)
 }
 
-func testAccSharednetworkUseIgnoreId(name string, networks []string, useIgnoreId, useIgnoreClientIdentifier bool) string {
+func testAccSharednetworkUseIgnoreId(name string, networks []string, useIgnoreId bool) string {
 	networksStr := formatNetworksToHCL(networks)
 	return fmt.Sprintf(`
 resource "nios_dhcp_shared_network" "test_use_ignore_id" {
    name = %q
    networks = %s
    use_ignore_id = %t
-   use_ignore_client_identifier = %t
 }
-`, name, networksStr, useIgnoreId, useIgnoreClientIdentifier)
+`, name, networksStr, useIgnoreId)
 }
 
 func testAccSharednetworkUseLeaseScavengeTime(name string, networks []string, useLeaseScavengeTime bool) string {

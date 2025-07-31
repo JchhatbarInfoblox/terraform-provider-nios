@@ -4,6 +4,8 @@ import (
 	"context"
 	"regexp"
 
+	"github.com/hashicorp/terraform-plugin-framework-nettypes/hwtypes"
+	"github.com/hashicorp/terraform-plugin-framework-nettypes/iptypes"
 	"github.com/hashicorp/terraform-plugin-framework-validators/boolvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
@@ -22,7 +24,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 
 	"github.com/infobloxopen/infoblox-nios-go-client/dhcp"
-
 	"github.com/infobloxopen/terraform-provider-nios/internal/flex"
 	internaltypes "github.com/infobloxopen/terraform-provider-nios/internal/types"
 	customvalidator "github.com/infobloxopen/terraform-provider-nios/internal/validator"
@@ -58,11 +59,11 @@ type FixedaddressModel struct {
 	ExtAttrs                       types.Map                        `tfsdk:"extattrs"`
 	ExtAttrsAll                    types.Map                        `tfsdk:"extattrs_all"`
 	IgnoreDhcpOptionListRequest    types.Bool                       `tfsdk:"ignore_dhcp_option_list_request"`
-	Ipv4addr                       types.String                     `tfsdk:"ipv4addr"`
+	Ipv4addr                       iptypes.IPv4Address              `tfsdk:"ipv4addr"`
 	FuncCall                       types.Object                     `tfsdk:"func_call"`
 	IsInvalidMac                   types.Bool                       `tfsdk:"is_invalid_mac"`
 	LogicFilterRules               types.List                       `tfsdk:"logic_filter_rules"`
-	Mac                            types.String                     `tfsdk:"mac"`
+	Mac                            hwtypes.MACAddress               `tfsdk:"mac"`
 	MatchClient                    types.String                     `tfsdk:"match_client"`
 	MsAdUserData                   types.Object                     `tfsdk:"ms_ad_user_data"`
 	MsOptions                      types.List                       `tfsdk:"ms_options"`
@@ -124,11 +125,11 @@ var FixedaddressAttrTypes = map[string]attr.Type{
 	"extattrs":                            types.MapType{ElemType: types.StringType},
 	"extattrs_all":                        types.MapType{ElemType: types.StringType},
 	"ignore_dhcp_option_list_request":     types.BoolType,
-	"ipv4addr":                            types.StringType,
+	"ipv4addr":                            iptypes.IPv4AddressType{},
 	"func_call":                           types.ObjectType{AttrTypes: FuncCallAttrTypes},
 	"is_invalid_mac":                      types.BoolType,
 	"logic_filter_rules":                  types.ListType{ElemType: types.ObjectType{AttrTypes: FixedaddressLogicFilterRulesAttrTypes}},
-	"mac":                                 types.StringType,
+	"mac":                                 hwtypes.MACAddressType{},
 	"match_client":                        types.StringType,
 	"ms_ad_user_data":                     types.ObjectType{AttrTypes: FixedaddressMsAdUserDataAttrTypes},
 	"ms_options":                          types.ListType{ElemType: types.ObjectType{AttrTypes: FixedaddressMsOptionsAttrTypes}},
@@ -398,6 +399,7 @@ var FixedaddressResourceSchemaAttributes = map[string]schema.Attribute{
 		MarkdownDescription: "If this field is set to False, the appliance returns all DHCP options the client is eligible to receive, rather than only the list of options the client has requested.",
 	},
 	"ipv4addr": schema.StringAttribute{
+		CustomType:          iptypes.IPv4AddressType{},
 		Optional:            true,
 		Computed:            true,
 		MarkdownDescription: "The IPv4 Address of the record.",
@@ -425,8 +427,9 @@ var FixedaddressResourceSchemaAttributes = map[string]schema.Attribute{
 		MarkdownDescription: "This field contains the logic filters to be applied on the this fixed address. This list corresponds to the match rules that are written to the dhcpd configuration file.",
 	},
 	"mac": schema.StringAttribute{
-		Optional: true,
-		Computed: true,
+		CustomType: hwtypes.MACAddressType{},
+		Optional:   true,
+		Computed:   true,
 		Validators: []validator.String{
 			stringvalidator.ExactlyOneOf(
 				path.MatchRoot("mac"),
@@ -655,10 +658,10 @@ func (m *FixedaddressModel) Expand(ctx context.Context, diags *diag.Diagnostics,
 		EnablePxeLeaseTime:             flex.ExpandBoolPointer(m.EnablePxeLeaseTime),
 		ExtAttrs:                       ExpandExtAttrs(ctx, m.ExtAttrs, diags),
 		IgnoreDhcpOptionListRequest:    flex.ExpandBoolPointer(m.IgnoreDhcpOptionListRequest),
-		Ipv4addr:                       ExpandRecordAIpv4addr(m.Ipv4addr),
+		Ipv4addr:                       ExpandFixedAddressIpv4addr(m.Ipv4addr),
 		FuncCall:                       ExpandFuncCall(ctx, m.FuncCall, diags),
 		LogicFilterRules:               flex.ExpandFrameworkListNestedBlock(ctx, m.LogicFilterRules, diags, ExpandFixedaddressLogicFilterRules),
-		Mac:                            flex.ExpandStringPointer(m.Mac),
+		Mac:                            flex.ExpandMACAddress(m.Mac),
 		MatchClient:                    flex.ExpandStringPointer(m.MatchClient),
 		MsAdUserData:                   ExpandFixedaddressMsAdUserData(ctx, m.MsAdUserData, diags),
 		MsOptions:                      flex.ExpandFrameworkListNestedBlock(ctx, m.MsOptions, diags, ExpandFixedaddressMsOptions),
@@ -701,6 +704,7 @@ func FlattenFixedaddress(ctx context.Context, from *dhcp.Fixedaddress, diags *di
 	}
 	m := FixedaddressModel{}
 	m.Flatten(ctx, from, diags)
+	m.ExtAttrsAll = types.MapNull(types.StringType)
 	t, d := types.ObjectValueFrom(ctx, FixedaddressAttrTypes, m)
 	diags.Append(d...)
 	return t
@@ -713,7 +717,6 @@ func (m *FixedaddressModel) Flatten(ctx context.Context, from *dhcp.Fixedaddress
 	if m == nil {
 		*m = FixedaddressModel{}
 	}
-	from.Options = RemoveDefaultFixedAddressDHCPOptions(ctx, diags, from.Options, m.Options)
 
 	m.Ref = flex.FlattenStringPointer(from.Ref)
 	m.AgentCircuitId = flex.FlattenStringPointer(from.AgentCircuitId)
@@ -740,11 +743,12 @@ func (m *FixedaddressModel) Flatten(ctx context.Context, from *dhcp.Fixedaddress
 	m.DiscoveredData = FlattenFixedaddressDiscoveredData(ctx, from.DiscoveredData, diags)
 	m.EnableDdns = types.BoolPointerValue(from.EnableDdns)
 	m.ExtAttrs = FlattenExtAttrs(ctx, m.ExtAttrs, from.ExtAttrs, diags)
+	m.EnablePxeLeaseTime = types.BoolPointerValue(from.EnablePxeLeaseTime)
 	m.IgnoreDhcpOptionListRequest = types.BoolPointerValue(from.IgnoreDhcpOptionListRequest)
-	m.Ipv4addr = FlattenRecordAIpv4addr(from.Ipv4addr)
+	m.Ipv4addr = FlattenFixedAddressIpv4addr(from.Ipv4addr)
 	m.IsInvalidMac = types.BoolPointerValue(from.IsInvalidMac)
 	m.LogicFilterRules = flex.FlattenFrameworkListNestedBlock(ctx, from.LogicFilterRules, FixedaddressLogicFilterRulesAttrTypes, diags, FlattenFixedaddressLogicFilterRules)
-	m.Mac = flex.FlattenStringPointer(from.Mac)
+	m.Mac = flex.FlattenMACAddress(from.Mac)
 	m.MatchClient = flex.FlattenStringPointer(from.MatchClient)
 	m.MsAdUserData = FlattenFixedaddressMsAdUserData(ctx, from.MsAdUserData, diags)
 	m.MsOptions = flex.FlattenFrameworkListNestedBlock(ctx, from.MsOptions, FixedaddressMsOptionsAttrTypes, diags, FlattenFixedaddressMsOptions)
@@ -753,7 +757,19 @@ func (m *FixedaddressModel) Flatten(ctx context.Context, from *dhcp.Fixedaddress
 	m.Network = flex.FlattenStringPointer(from.Network)
 	m.NetworkView = flex.FlattenStringPointer(from.NetworkView)
 	m.Nextserver = flex.FlattenStringPointer(from.Nextserver)
-	m.Options = flex.FlattenFrameworkUnorderedListNestedBlock(ctx, from.Options, FixedaddressOptionsAttrTypes, diags, FlattenFixedaddressOptions)
+	m.Options = flex.FilterDHCPOptions(
+		ctx,
+		diags,
+		from.Options,
+		m.Options,
+		FixedaddressOptionsAttrTypes,
+		func(ctx context.Context, opt *dhcp.FixedaddressOptions, d *diag.Diagnostics) types.Object {
+			return FlattenFixedaddressOptions(ctx, opt, d)
+		},
+		func(ctx context.Context, obj types.Object, d *diag.Diagnostics) *dhcp.FixedaddressOptions {
+			return ExpandFixedaddressOptions(ctx, obj, d)
+		},
+	)
 	m.PxeLeaseTime = flex.FlattenInt64Pointer(from.PxeLeaseTime)
 	m.ReservedInterface = flex.FlattenStringPointer(from.ReservedInterface)
 	m.Snmp3Credential = FlattenFixedaddressSnmp3Credential(ctx, from.Snmp3Credential, diags)
@@ -779,48 +795,20 @@ func (m *FixedaddressModel) Flatten(ctx context.Context, from *dhcp.Fixedaddress
 	}
 }
 
-func ExpandRecordAIpv4addr(str types.String) *dhcp.FixedaddressIpv4addr {
-	if str.IsNull() {
+func ExpandFixedAddressIpv4addr(ipv4addr iptypes.IPv4Address) *dhcp.FixedaddressIpv4addr {
+	if ipv4addr.IsNull() {
 		return &dhcp.FixedaddressIpv4addr{}
 	}
 	var m dhcp.FixedaddressIpv4addr
-	m.String = flex.ExpandStringPointer(str)
-
+	m.String = flex.ExpandIPv4Address(ipv4addr)
 	return &m
 }
 
-func FlattenRecordAIpv4addr(from *dhcp.FixedaddressIpv4addr) types.String {
+func FlattenFixedAddressIpv4addr(from *dhcp.FixedaddressIpv4addr) iptypes.IPv4Address {
 	if from.String == nil {
-		return types.StringNull()
+		return iptypes.NewIPv4AddressNull()
 	}
-	m := flex.FlattenStringPointer(from.String)
+	m := flex.FlattenIPv4Address(from.String)
 	return m
 }
 
-// RemoveDefaultFixedAddressDHCPOptions removes the default DHCP options from the provided options list.
-func RemoveDefaultFixedAddressDHCPOptions(ctx context.Context, diags *diag.Diagnostics, options []dhcp.FixedaddressOptions, planOptions internaltypes.UnorderedListValue) []dhcp.FixedaddressOptions {
-	defaultOptionName := "dhcp-lease-time"
-	defaultOptionVal := ""
-
-	planOptionsArr := flex.ExpandFrameworkListNestedBlock(ctx, planOptions, diags, ExpandFixedaddressOptions)
-
-	for i := range planOptionsArr {
-		if *planOptionsArr[i].Name == defaultOptionName {
-			defaultOptionVal = *planOptionsArr[i].Value
-		}
-	}
-	var result []dhcp.FixedaddressOptions
-
-	for i := range options {
-		if *options[i].Name == defaultOptionName && *options[i].Value != defaultOptionVal {
-			continue
-		}
-		result = append(result, options[i])
-	}
-
-	if len(result) == 0 {
-		return options
-	}
-
-	return result
-}

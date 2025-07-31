@@ -4,6 +4,7 @@ import (
 	"context"
 	"regexp"
 
+	"github.com/hashicorp/terraform-plugin-framework-nettypes/iptypes"
 	"github.com/hashicorp/terraform-plugin-framework-validators/boolvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
@@ -31,7 +32,7 @@ import (
 
 type ZoneAuthModel struct {
 	Ref                                     types.String                     `tfsdk:"ref"`
-	Address                                 types.String                     `tfsdk:"address"`
+	Address                                 iptypes.IPAddress                `tfsdk:"address"`
 	AllowActiveDir                          types.List                       `tfsdk:"allow_active_dir"`
 	AllowFixedRrsetOrder                    types.Bool                       `tfsdk:"allow_fixed_rrset_order"`
 	AllowGssTsigForUnderscoreZone           types.Bool                       `tfsdk:"allow_gss_tsig_for_underscore_zone"`
@@ -79,7 +80,7 @@ type ZoneAuthModel struct {
 	GridPrimary                             types.List                       `tfsdk:"grid_primary"`
 	GridPrimarySharedWithMsParentDelegation types.Bool                       `tfsdk:"grid_primary_shared_with_ms_parent_delegation"`
 	GridSecondaries                         types.List                       `tfsdk:"grid_secondaries"`
-	ImportFrom                              types.String                     `tfsdk:"import_from"`
+	ImportFrom                              iptypes.IPAddress                `tfsdk:"import_from"`
 	IsDnssecEnabled                         types.Bool                       `tfsdk:"is_dnssec_enabled"`
 	IsDnssecSigned                          types.Bool                       `tfsdk:"is_dnssec_signed"`
 	IsMultimaster                           types.Bool                       `tfsdk:"is_multimaster"`
@@ -152,7 +153,7 @@ type ZoneAuthModel struct {
 
 var ZoneAuthAttrTypes = map[string]attr.Type{
 	"ref":                                  types.StringType,
-	"address":                              types.StringType,
+	"address":                              iptypes.IPAddressType{},
 	"allow_active_dir":                     types.ListType{ElemType: types.ObjectType{AttrTypes: ZoneAuthAllowActiveDirAttrTypes}},
 	"allow_fixed_rrset_order":              types.BoolType,
 	"allow_gss_tsig_for_underscore_zone":   types.BoolType,
@@ -200,7 +201,7 @@ var ZoneAuthAttrTypes = map[string]attr.Type{
 	"grid_primary":                         types.ListType{ElemType: types.ObjectType{AttrTypes: ZoneAuthGridPrimaryAttrTypes}},
 	"grid_primary_shared_with_ms_parent_delegation": types.BoolType,
 	"grid_secondaries":            types.ListType{ElemType: types.ObjectType{AttrTypes: ZoneAuthGridSecondariesAttrTypes}},
-	"import_from":                 types.StringType,
+	"import_from":                 iptypes.IPAddressType{},
 	"is_dnssec_enabled":           types.BoolType,
 	"is_dnssec_signed":            types.BoolType,
 	"is_multimaster":              types.BoolType,
@@ -277,6 +278,7 @@ var ZoneAuthResourceSchemaAttributes = map[string]schema.Attribute{
 		MarkdownDescription: "The reference to the object.",
 	},
 	"address": schema.StringAttribute{
+		CustomType:          iptypes.IPAddressType{},
 		Computed:            true,
 		MarkdownDescription: "The IP address of the server that is serving this zone.",
 	},
@@ -663,12 +665,12 @@ var ZoneAuthResourceSchemaAttributes = map[string]schema.Attribute{
 		MarkdownDescription: "The list with Grid members that are secondary servers for this zone.",
 	},
 	"import_from": schema.StringAttribute{
-		Optional: true,
-		Computed: true,
+		CustomType: iptypes.IPAddressType{},
+		Optional:   true,
+		Computed:   true,
 		Validators: []validator.String{
 			stringvalidator.AlsoRequires(path.MatchRoot("use_import_from")),
 		},
-		Default:             stringdefault.StaticString(""),
 		MarkdownDescription: "The IP address of the Infoblox appliance from which zone data is imported. Setting this address to '255.255.255.255' and do_host_abstraction to 'true' will create Host records from A records in this zone without importing zone data.",
 	},
 	"is_dnssec_enabled": schema.BoolAttribute{
@@ -1218,6 +1220,7 @@ func (m *ZoneAuthModel) Expand(ctx context.Context, diags *diag.Diagnostics, isC
 		ExternalSecondaries:                 flex.ExpandFrameworkListNestedBlock(ctx, m.ExternalSecondaries, diags, ExpandZoneAuthExternalSecondaries),
 		GridPrimary:                         flex.ExpandFrameworkListNestedBlock(ctx, m.GridPrimary, diags, ExpandZoneAuthGridPrimary),
 		GridSecondaries:                     flex.ExpandFrameworkListNestedBlock(ctx, m.GridSecondaries, diags, ExpandZoneAuthGridSecondaries),
+		ImportFrom:                          flex.ExpandIPAddress(m.ImportFrom),
 		LastQueriedAcl:                      flex.ExpandFrameworkListNestedBlock(ctx, m.LastQueriedAcl, diags, ExpandZoneAuthLastQueriedAcl),
 		Locked:                              flex.ExpandBoolPointer(m.Locked),
 		MemberSoaMnames:                     flex.ExpandFrameworkListNestedBlock(ctx, m.MemberSoaMnames, diags, ExpandZoneAuthMemberSoaMnames),
@@ -1273,10 +1276,6 @@ func (m *ZoneAuthModel) Expand(ctx context.Context, diags *diag.Diagnostics, isC
 		to.ZoneFormat = flex.ExpandStringPointer(m.ZoneFormat)
 	}
 
-	// Set ImportFrom only if it has a non-empty value to avoid "Invalid IP address" error when an empty string is sent to the API
-	if !m.ImportFrom.IsUnknown() && m.ImportFrom.ValueString() != "" {
-		to.ImportFrom = flex.ExpandStringPointer(m.ImportFrom)
-	}
 	return to
 }
 
@@ -1286,6 +1285,7 @@ func FlattenZoneAuth(ctx context.Context, from *dns.ZoneAuth, diags *diag.Diagno
 	}
 	m := ZoneAuthModel{}
 	m.Flatten(ctx, from, diags)
+	m.ExtAttrsAll = types.MapNull(types.StringType)
 	t, d := types.ObjectValueFrom(ctx, ZoneAuthAttrTypes, m)
 	diags.Append(d...)
 	return t
@@ -1299,7 +1299,7 @@ func (m *ZoneAuthModel) Flatten(ctx context.Context, from *dns.ZoneAuth, diags *
 		*m = ZoneAuthModel{}
 	}
 	m.Ref = flex.FlattenStringPointer(from.Ref)
-	m.Address = flex.FlattenStringPointer(from.Address)
+	m.Address = flex.FlattenIPAddress(from.Address)
 	m.AllowActiveDir = flex.FlattenFrameworkListNestedBlock(ctx, from.AllowActiveDir, ZoneAuthAllowActiveDirAttrTypes, diags, FlattenZoneAuthAllowActiveDir)
 	m.AllowFixedRrsetOrder = types.BoolPointerValue(from.AllowFixedRrsetOrder)
 	m.AllowGssTsigForUnderscoreZone = types.BoolPointerValue(from.AllowGssTsigForUnderscoreZone)
@@ -1343,6 +1343,7 @@ func (m *ZoneAuthModel) Flatten(ctx context.Context, from *dns.ZoneAuth, diags *
 	m.GridPrimary = flex.FlattenFrameworkListNestedBlock(ctx, from.GridPrimary, ZoneAuthGridPrimaryAttrTypes, diags, FlattenZoneAuthGridPrimary)
 	m.GridPrimarySharedWithMsParentDelegation = types.BoolPointerValue(from.GridPrimarySharedWithMsParentDelegation)
 	m.GridSecondaries = flex.FlattenFrameworkListNestedBlock(ctx, from.GridSecondaries, ZoneAuthGridSecondariesAttrTypes, diags, FlattenZoneAuthGridSecondaries)
+	m.ImportFrom = flex.FlattenIPAddress(from.ImportFrom)
 	m.IsDnssecEnabled = types.BoolPointerValue(from.IsDnssecEnabled)
 	m.IsDnssecSigned = types.BoolPointerValue(from.IsDnssecSigned)
 	m.IsMultimaster = types.BoolPointerValue(from.IsMultimaster)
